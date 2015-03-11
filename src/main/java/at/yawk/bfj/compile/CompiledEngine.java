@@ -6,10 +6,8 @@
 
 package at.yawk.bfj.compile;
 
-import at.yawk.bfj.Automaton;
-import at.yawk.bfj.Engine;
-import at.yawk.bfj.MemoryProgram;
-import at.yawk.bfj.ProgramIterator;
+import at.yawk.bfj.*;
+import at.yawk.reflect.UncheckedReflectiveOperationException;
 import at.yawk.reflect.Unsafes;
 import java.io.IOException;
 import java.util.stream.Collectors;
@@ -35,16 +33,32 @@ public class CompiledEngine implements Engine {
     @Override
     public Automaton produce(ProgramIterator iterator) {
         try {
-            return produce0(iterator);
-        } catch (NotFoundException | IOException | InstantiationException | CannotCompileException |
-                IllegalAccessException e) {
-            throw new RuntimeException(e);
+            byte[] bytes = compile(iterator);
+            Class<?> c = Unsafes.getUnsafe().defineAnonymousClass(CompiledEngine.class, bytes, null);
+            return (Automaton) c.newInstance();
+        } catch (InstantiationException | IllegalAccessException e) {
+            throw new UncheckedReflectiveOperationException(e);
         }
     }
 
-    private Automaton produce0(ProgramIterator iterator)
-            throws NotFoundException, IOException, CannotCompileException, InstantiationException,
-                   IllegalAccessException {
+    /**
+     * Compile the given program to java bytecode. The returned array represents a .class file.
+     *
+     * <ul>
+     * <li>The returned class implements {@link at.yawk.bfj.Automaton}.</li>
+     * <li>The returned class does not necessarily have a non-empty, unique name.</li>
+     * <li>The returned class may be final.</li>
+     * </ul>
+     */
+    public byte[] compile(ProgramIterator iterator) {
+        try {
+            return compile0(iterator);
+        } catch (NotFoundException | IOException | CannotCompileException e) {
+            throw new ParserException("Failed to compile", e);
+        }
+    }
+
+    private byte[] compile0(ProgramIterator iterator) throws NotFoundException, IOException, CannotCompileException {
         Expression rootExpression = new ExpressionCompiler(iterator, optimizer).compile();
 
         ClassPool pool = ClassPool.getDefault();
@@ -69,9 +83,6 @@ public class CompiledEngine implements Engine {
         ctClass.addMethod(method);
 
         ctClass.getClassFile().setVersionToJava5();
-        byte[] bytes = ctClass.toBytecode();
-
-        Class<?> c = Unsafes.getUnsafe().defineAnonymousClass(CompiledEngine.class, bytes, null);
-        return (Automaton) c.newInstance();
+        return ctClass.toBytecode();
     }
 }
